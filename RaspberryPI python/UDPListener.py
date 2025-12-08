@@ -1,9 +1,10 @@
+import requests
 import socket
 import json
 import time
 
 # --- Configuration (Must match sender) ---
-LISTEN_PORT = 37022   # Port for receiving the broadcast
+LISTEN_PORT = 37020   # Port for receiving the broadcast
 RESPONSE_PORT = 37021 # Port on the sender that is listening for the reply
 # --- End Configuration ---
 
@@ -20,7 +21,6 @@ def listen_and_respond():
         listener_sock.bind(('0.0.0.0', LISTEN_PORT)) # be able to receive broadcasts on all subnets
         
         print(f"Client **{CLIENT_ID}** 📡 Listening for broadcasts on port {LISTEN_PORT}...")
-        
         while True:
             data, addr = listener_sock.recvfrom(1024) 
             
@@ -40,14 +40,19 @@ def listen_and_respond():
                 continue
             
             # hent api data
-            api_response = True
-            
+            try:
+                openstatus = requests.get('http://localhost:5082/api/windows/status/1', timeout=2)
+                openstatus = openstatus.json()
+                print("API request successful:", openstatus)
+            except requests.RequestException as e:
+                print("API request failed:", e)
             
             # 4. Construct the directed response
             response_payload = {
                 "source": CLIENT_ID,
-                "should_open": api_response,
+                "should_open": openstatus,
             }
+            
             response_json = json.dumps(response_payload) # convert to JSON string
             response_encoded = response_json.encode('utf-8') # encode to bytes
             

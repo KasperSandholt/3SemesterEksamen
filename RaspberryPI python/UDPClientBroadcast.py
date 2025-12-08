@@ -36,13 +36,13 @@ def receive_replies():
                 reply_json = data.decode('utf-8')
                 reply_data = json.loads(reply_json)
                 
-                if reply_data.get('should_open', False):
+                if reply_data.get('should_open'):
                     print("Motor forward")
                     motor.forward()
                     time.sleep(1.5)
                     motor.stop()
                     
-                if reply_data.get('should_open', True):
+                if not reply_data.get('should_open'):
                     print("Motor backward")
                     motor.backward()
                     time.sleep(1.5)
