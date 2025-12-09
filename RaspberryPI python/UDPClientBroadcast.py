@@ -83,8 +83,9 @@ def send_continuous_broadcast():
         while True:
             payload_data = {
                 "id": id,
-                "timestamp": time.time(),
+                "last_updated": time.time(),
                 "message": "should i open?",
+                "type": "window_controller"
             }
             
             json_string = json.dumps(payload_data)

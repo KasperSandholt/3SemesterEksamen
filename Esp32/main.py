@@ -9,8 +9,8 @@ import ujson  # We use JSON so the data is easy to read later
 SSID = 'MGV2-DMU1'
 PASSWORD = 'lanmagle'
 BROADCAST_IP = '255.255.255.255' # This sends to everyone on the network
-PORT = 37022                      # The "channel" we are shouting on
-PIN_NUM = 4                     # Change this if not using Pin 4
+PORT = 37020                      # The "channel" we are shouting on
+PIN_NUM = 4                    # Change this if not using Pin 4
 ID = 1
 
 # --- SETUP WIFI ---
@@ -39,8 +39,10 @@ try:
         
         payload_data = {
             "type": "dht11",
+            "id": ID,
             "temperature": temp,
             "humidity": hum,
+            "last_updated": time.time()
         }
         
         json_string = ujson.dumps(payload_data)

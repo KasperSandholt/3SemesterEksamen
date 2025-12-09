@@ -3,15 +3,12 @@ import json
 import time
 
 # --- Configuration (Must match sender) ---
-LISTEN_PORT = 37022   # Port for receiving the broadcast
-RESPONSE_PORT = 37021 # Port on the sender that is listening for the reply
+LISTEN_PORT = 37020   # Port for receiving the broadcast
+
 # --- End Configuration ---
 
-# Id of this client that sends the response
-CLIENT_ID = "proxy_pc" 
-
-def listen_and_respond():
-    """Listens for broadcasts, parses JSON, and sends a directed response."""
+def listen():
+    """Listens for broadcasts, parses JSON."""
     
     # Start listen for broadcasts
     try:
@@ -30,12 +27,18 @@ def listen_and_respond():
                 json_string = data.decode('utf-8') # Decode bytes to string
                 received_data = json.loads(json_string) # From string to JSON
                 
-                message_from_pi = received_data.get('message', 'N/A')
+                sensor_type = received_data.get('type', 'N/A')
+                sensor_id = received_data.get('id', 'N/A')
                 temperature = received_data.get('temperature', 'N/A')
                 humidity = received_data.get('humidity', 'N/A')
                 last_update = received_data.get('last_updated', 'N/A')
-                print(last_update)
-                print(f"Temperature: {temperature}C, Humidity: {humidity}%, last update: {last_update}")
+                # convert unix time to readable format
+                if last_update != 'N/A':
+                    last_update += 946684800  # Adjust from ESP32 epoch to Unix epoch
+                    last_update = time.gmtime(last_update)
+                    last_update_str = time.strftime("%d-%m-%Y %H:%M:%S", last_update)
+                print(f"[RECEIVED] Sensor type: {sensor_type}, id: {sensor_id} from {broadcaster_ip}")
+                print(f"Temperature: {temperature}C, Humidity: {humidity}%, last update: {last_update_str}")
             except json.JSONDecodeError:
                 print(f"  [ERROR] Received unreadable data from {broadcaster_ip}. Skipping.")
                 continue
@@ -49,4 +52,4 @@ def listen_and_respond():
             listener_sock.close()
         print("Listener socket closed. Exiting.")
 
-listen_and_respond()
+listen()
