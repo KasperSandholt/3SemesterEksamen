@@ -17,10 +17,15 @@ log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),  "log.txt")
 log = open(log_path, "a")
 
 openstatus = None
+opened_by_humidity = False
+
+ip_address_map = {}
 
 def listen():
     """Listens for broadcasts, parses JSON."""
     global openstatus
+    global opened_by_humidity
+    openstatus = get_windows_status(1)
     while True:
         # Start listen for broadcasts
         try:
@@ -37,12 +42,15 @@ def listen():
             try:
                 JSON_string = data.decode('utf-8') # Decode bytes to string
                 received_data = json.loads(JSON_string) # From string to JSON
+                ip_address_map[received_data.get('type', 'N/A')] = broadcaster_ip
+                # handle data from esp32
                 if(received_data.get("type") == "dht11"):
                     sensor_type = received_data.get('type', 'N/A')
                     sensor_id = received_data.get('id', 'N/A')
                     temperature = received_data.get('temperature', 'N/A')
                     humidity = received_data.get('humidity', 'N/A')
                     last_updated = received_data.get('last_updated', 'N/A')
+                    
                     if last_updated != 'N/A':
                         last_updated += 946684800  # Adjust from ESP32 epoch to Unix epoch
                         last_message_esp32_time = last_updated
@@ -52,6 +60,20 @@ def listen():
                     print(f"Temperature: {temperature}C, Humidity: {humidity}%, last update: {last_updated_str}")
                     # update humidity via api
                     update_room_humidity(sensor_id, humidity)
+                    
+                    # open window if humidity is too high
+                    if(humidity >= 60 and opened_by_humidity == False):
+                        print("High humidity detected, sending open instruction")
+                        send_instruction(True, ip_address_map.get("window_controller"))
+                        update_window_status(sensor_id, True)
+                        opened_by_humidity = True
+                    # close window if humidity is back to normal
+                    if(humidity < 50 and opened_by_humidity == True):
+                        print("Humidity back to normal, sending close instruction")
+                        send_instruction(False, ip_address_map.get("window_controller"))
+                        update_window_status(sensor_id, False)
+                        opened_by_humidity = False
+                # handle messages from raspberry pi
                 elif(received_data.get("type") == "window_controller"):
                     message_from_pi = received_data.get('message', 'N/A')
                     last_updated = received_data.get('last_updated', 0)
@@ -104,6 +126,19 @@ def get_windows_status(id):
     except requests.RequestException as e:
         print(f"[API ERROR] Exception occurred while fetching window status: {e}")
         return None
+
+def update_window_status(id, should_open):
+    """Updates the window status via API."""
+    try:
+        response = requests.get(f'https://breeasy.azurewebsites.net/api/Windows/{id}')
+        if response.status_code == 200:
+            window_data = response.json()
+            window_data['isOpen'] = should_open
+            put_response = requests.put(f'https://breeasy.azurewebsites.net/api/Windows/{id}', json=window_data)
+        else:
+            print(f"[API ERROR] Failed to fetch window data for id {id}. Status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"[API ERROR] Exception occurred while updating window status for id {id}: {e}")
 
 def send_instruction(window_status, broadcaster_ip):
     """Sends instruction to the Raspberry Pi based on window status."""
