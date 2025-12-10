@@ -52,6 +52,7 @@ def listen():
                     print(f"Temperature: {temperature}C, Humidity: {humidity}%, last update: {last_updated_str}")
                     # update humidity via api
                     update_room_humidity(sensor_id, humidity)
+                    update_room_temperature(sensor_id, temperature)
                 elif(received_data.get("type") == "window_controller"):
                     message_from_pi = received_data.get('message', 'N/A')
                     last_updated = received_data.get('last_updated', 0)
@@ -75,7 +76,7 @@ def listen():
                 log.flush()
         except KeyboardInterrupt:
             print("\n\n Receiver stopped by user (Ctrl+C).")
-                
+
 
 def check_data_timeout():
     """Check every minute if data was recently received."""
@@ -144,7 +145,18 @@ def update_room_humidity(id, humidity):
             print(f"[API ERROR] Failed to update humidity for room {id}. Status code: {response.status_code}")
     except requests.RequestException as e:
         print(f"[API ERROR] Exception occurred while updating humidity for room {id}: {e}")
-        
+
+def update_room_temperature(id, temperature):
+    """Updates the room temperature via API."""
+    try:
+        response = requests.put(f'https://breeasy.azurewebsites.net/api/Locations/temperature/{id}?temperature={temperature}')
+        if response.status_code == 200:
+            print(f"[API] Successfully updated temperature for room {id} to {temperature}°C.")
+        else:
+            print(f"[API ERROR] Failed to update temperature for room {id}. Status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"[API ERROR] Exception occurred while updating temperature for room {id}: {e}")
+
 checker_thread = threading.Thread(target=check_data_timeout, daemon=True)
 checker_thread.start()
 listen()
