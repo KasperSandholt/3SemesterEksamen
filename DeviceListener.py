@@ -132,7 +132,7 @@ def listen():
                 
         except KeyboardInterrupt:
             print("\n\n Receiver stopped by user (Ctrl+C).")
-                
+
 
 def check_data_timeout():
     """
@@ -252,7 +252,18 @@ def update_room_humidity(id, humidity):
             print(f"[API ERROR] Failed to update humidity for room {id}. Status code: {response.status_code}")
     except requests.RequestException as e:
         print(f"[API ERROR] Exception occurred while updating humidity for room {id}: {e}")
-        
+
+def update_room_temperature(id, temperature):
+    """Updates the room temperature via API."""
+    try:
+        response = requests.put(f'https://breeasy.azurewebsites.net/api/Locations/temperature/{id}?temperature={temperature}')
+        if response.status_code == 200:
+            print(f"[API] Successfully updated temperature for room {id} to {temperature}°C.")
+        else:
+            print(f"[API ERROR] Failed to update temperature for room {id}. Status code: {response.status_code}")
+    except requests.RequestException as e:
+        print(f"[API ERROR] Exception occurred while updating temperature for room {id}: {e}")
+
 # start timeout checker thread
 checker_thread = threading.Thread(target=check_data_timeout, daemon=True)
 checker_thread.start()
