@@ -13,49 +13,70 @@ client_id = "proxy_pc"
 last_message_esp32_time = time.time()
 last_message_pi_time = time.time()
 
+# Set up logging by creating/opening a log file in append mode
 log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),  "log.txt")
 log = open(log_path, "a")
 
-openstatus = None
-opened_by_humidity = False
+openstatus = None # status if the window is open
+opened_by_humidity = False # status for if the window is opened by humidity
 
+# map of addresses to be able to send command to right device
 ip_address_map = {}
 
+
 def listen():
-    """Listens for broadcasts, parses JSON."""
+    """
+    Listens for broadcasts from devices and processes the received data.
+    if the type is dht11, it updates the humidity and possibly opens/closes the window.
+    else if the type is window controller it checks for status changes and sends instructions accordingly.
+    """
+    
+    # get the global variables
     global openstatus
     global opened_by_humidity
+    global last_message_esp32_time
+    global last_message_pi_time
+    
+    # initial fetch of window status for the window controller with id 1
     openstatus = get_windows_status(1)
     while True:
         # Start listen for broadcasts
         try:
-            listener_sock = socket(AF_INET, SOCK_DGRAM) # UDP Socket
+            listener_sock = socket(AF_INET, SOCK_DGRAM) # Initialize UDP socket
             listener_sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1) # Allow address reuse
-            listener_sock.bind(('0.0.0.0', listen_port))
+            listener_sock.bind(('0.0.0.0', listen_port)) # Bind to all interfaces on the specified port
             
+            # Listen for incoming data
             data, addr = listener_sock.recvfrom(1024)
             log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Received data from {addr}, data: {data}\n")
             log.flush()
-            
+
             broadcaster_ip = addr[0]
             
+            # Parse the received JSON data
             try:
                 JSON_string = data.decode('utf-8') # Decode bytes to string
                 received_data = json.loads(JSON_string) # From string to JSON
+                
+                # update ip address map to save the ip address of the device
                 ip_address_map[received_data.get('type', 'N/A')] = broadcaster_ip
-                # handle data from esp32
+                
+                # handle data from esp32(sensor dht11)
                 if(received_data.get("type") == "dht11"):
+                    # get data from the json
                     sensor_type = received_data.get('type', 'N/A')
                     sensor_id = received_data.get('id', 'N/A')
                     temperature = received_data.get('temperature', 'N/A')
                     humidity = received_data.get('humidity', 'N/A')
                     last_updated = received_data.get('last_updated', 'N/A')
                     
+                    # convert unix time to readable format
                     if last_updated != 'N/A':
                         last_updated += 946684800  # Adjust from ESP32 epoch to Unix epoch
-                        last_message_esp32_time = last_updated
+                        last_message_esp32_time = last_updated # update last message time
                         last_updated = time.gmtime(last_updated)
                         last_updated_str = time.strftime("%d-%m-%Y %H:%M:%S", last_updated)
+                        
                     print(f"[RECEIVED] Sensor type: {sensor_type}, id: {sensor_id} from {broadcaster_ip}")
                     print(f"Temperature: {temperature}C, Humidity: {humidity}%, last update: {last_updated_str}")
                     # update humidity via api
@@ -73,50 +94,78 @@ def listen():
                         send_instruction(False, ip_address_map.get("window_controller"))
                         update_window_status(sensor_id, False)
                         opened_by_humidity = False
+
                 # handle messages from raspberry pi
                 elif(received_data.get("type") == "window_controller"):
+                    
+                    # get data from the json
                     message_from_pi = received_data.get('message', 'N/A')
                     last_updated = received_data.get('last_updated', 0)
                     print(f"[RECEIVED] Broadcast message: {message_from_pi} from {broadcaster_ip} with id: {received_data.get('id', 'N/A')}, last_updated: {last_updated}")
-                    last_message_pi_time = last_updated
+                    
+                    last_message_pi_time = last_updated # update last message time
+                    
+                    # fetch current window status from api
                     window_status = get_windows_status(received_data.get('id', 'N/A'))
                     print(f"Window status for id {received_data.get('id', 'N/A')}: {window_status}")
+                    
+                    # check if status has changed
                     if openstatus != window_status:
                         print("Status changed, sending instruction")
                         send_instruction(window_status, broadcaster_ip)
                         openstatus = window_status
                 else: 
+                    # handle unknown type
+                    log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - VALUE ERROR from {broadcaster_ip}: Unknown type received, raw data: {data}\n")
+                    log.flush()
                     raise ValueError("Unknown type received")
+                
             except json.JSONDecodeError as e:
                 print(f"  [ERROR] Received unreadable data from {broadcaster_ip}. Skipping.")
                 log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - JSON DECODE ERROR from {broadcaster_ip}: {e}, raw data: {data}\n")
                 log.flush()
+                
             except ValueError as ve:
                 print(f"  [ERROR] {ve} from {broadcaster_ip}. Skipping.")
                 log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - VALUE ERROR from {broadcaster_ip}: {ve}, raw data: {data}\n")
                 log.flush()
+                
         except KeyboardInterrupt:
             print("\n\n Receiver stopped by user (Ctrl+C).")
                 
 
 def check_data_timeout():
-    """Check every minute if data was recently received."""
+    """
+    Check every minute if data was recently received from devices.
+    if not, log a warning.
+    """
+    global last_message_esp32_time
+    global last_message_pi_time
     while True:
         time.sleep(60)
+        
         current_time = time.time()
+        # check if more than a minute has passed since last message from esp32
         if current_time - last_message_esp32_time + 946684800 > 60:
             print(f"No data received in the last minute!")
             log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - WARNING: No data received in the last minute!\n")
-            log.flush()  # Force write to disk immediately
+            log.flush()
+        # check if more than a minute has passed since last message from raspberry pi
         if current_time - last_message_pi_time > 60:
             print(f"No data received from Raspberry Pi in the last minute!")
             log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - WARNING: No data received from Raspberry Pi in the last minute!\n")
-            log.flush()  # Force write to disk immediately
+            log.flush()
 
 def get_windows_status(id):
-    """Fetches window status from the local API."""
+    """
+    Fetches window status from the local API.
+    
+    returns: True if window is open, False if closed, None if error.
+    """
     try:
+        # Make GET request to fetch window status
         response = requests.get(f'https://breeasy.azurewebsites.net/api/windows/status/{id}')
+        # if the request was successful, parse the JSON response
         if response.status_code == 200:
             status_data = response.json()
             return status_data
@@ -128,7 +177,13 @@ def get_windows_status(id):
         return None
 
 def update_window_status(id, should_open):
-    """Updates the window status via API."""
+    """
+    Updates the window status in the database via API.
+    
+    id: window id
+    
+    should_open: True if window is open, False if closed
+    """
     try:
         response = requests.get(f'https://breeasy.azurewebsites.net/api/Windows/{id}')
         if response.status_code == 200:
@@ -141,26 +196,38 @@ def update_window_status(id, should_open):
         print(f"[API ERROR] Exception occurred while updating window status for id {id}: {e}")
 
 def send_instruction(window_status, broadcaster_ip):
-    """Sends instruction to the Raspberry Pi based on window status."""
+    """
+    Sends instruction to the Raspberry Pi to either open or close the window.
+    
+    window_status: True to open, False to close
+    
+    broadcaster_ip: IP address of the Raspberry Pi
+    """
     try:
+        # Initialize UDP socket for sending reply
         reply_sock = socket(AF_INET, SOCK_DGRAM)
         reply_sock.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
         
+        # Ensure we have a valid window status to send
         if window_status is None:
             print("[SEND ERROR] Cannot send instruction due to unknown window status.")
             return
         
+        # Prepare instruction payload
         instruction_payload = {
             "source": client_id,
             "should_open": window_status,
         }
         
+        # Convert payload to JSON and encode to bytes
         instruction_json = json.dumps(instruction_payload)
         instruction_encoded = instruction_json.encode('utf-8')
         
+        # Log the sending action
         log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Sending instruction to {broadcaster_ip}:{response_port}, data: {instruction_json}\n")
         log.flush()
         
+        # Send the instruction to the broadcaster's IP and response port
         reply_sock.sendto(instruction_encoded, (broadcaster_ip, response_port))
         
     except Exception as e:
@@ -170,7 +237,13 @@ def send_instruction(window_status, broadcaster_ip):
             reply_sock.close()
 
 def update_room_humidity(id, humidity):
-    """Updates the room humidity via API."""
+    """
+    Updates the humidity of a room via API.
+    
+    id: room id
+    
+    humidity: new humidity value
+    """
     try:
         response = requests.put(f'https://breeasy.azurewebsites.net/api/Locations/humidity/{id}?humidity={humidity}')
         if response.status_code == 200:
@@ -180,6 +253,9 @@ def update_room_humidity(id, humidity):
     except requests.RequestException as e:
         print(f"[API ERROR] Exception occurred while updating humidity for room {id}: {e}")
         
+# start timeout checker thread
 checker_thread = threading.Thread(target=check_data_timeout, daemon=True)
 checker_thread.start()
+
+# start listening for broadcasts
 listen()
