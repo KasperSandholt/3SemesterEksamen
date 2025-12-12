@@ -1,3 +1,4 @@
+from logging import log
 from socket import *
 import json
 import time
@@ -5,23 +6,24 @@ import threading
 import requests
 import os
 
-listen_port = 37020   # Port for receiving the broadcast
-response_port = 37021 # Port on the sender that is listening for the reply
 
-client_id = "proxy_pc"
-
-last_message_esp32_time = time.time()
-last_message_pi_time = time.time()
+# --- CONFIGURATION ---
+LISTEN_PORT = 37020          # Port for receiving the broadcast
+RESPONSE_PORT = 37021        # Port to send instructions to the Raspberry Pi
+CLIENT_ID = "proxy_pc"       # Unique ID for this client
+LAST_MESSAGE_ESP32_TIME = 0  # Time of last message from ESP32
+LAST_MESSAGE_PI_TIME = 0     # Time of last message from Raspberry Pi
 
 # Set up logging by creating/opening a log file in append mode
-log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),  "log.txt")
-log = open(log_path, "a")
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),  "log.txt")
+LOG = open(LOG_PATH, "a")
 
-openstatus = None # status if the window is open
-opened_by_humidity = False # status for if the window is opened by humidity
+OPEN_STATUS = None           # status if the window is open
+OPEN_BY_HUMIDITY = False     # status for if the window is opened by humidity
 
 # map of addresses to be able to send command to right device
-ip_address_map = {}
+IP_ADDRESS_MAP = {}
+# --- End Configuration ---
 
 
 def listen():
@@ -32,34 +34,36 @@ def listen():
     """
     
     # get the global variables
-    global openstatus
-    global opened_by_humidity
-    global last_message_esp32_time
-    global last_message_pi_time
+    global OPEN_STATUS
+    global OPEN_BY_HUMIDITY
+    global LAST_MESSAGE_ESP32_TIME
+    global LAST_MESSAGE_PI_TIME
     
     # initial fetch of window status for the window controller with id 1
-    openstatus = get_windows_status(1)
+    OPEN_STATUS = get_windows_status(1)
     while True:
         # Start listen for broadcasts
         try:
-            listener_sock = socket(AF_INET, SOCK_DGRAM) # Initialize UDP socket
-            listener_sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1) # Allow address reuse
-            listener_sock.bind(('0.0.0.0', listen_port)) # Bind to all interfaces on the specified port
+            listener_sock = socket(AF_INET, SOCK_DGRAM)             # Initialize UDP socket
+            listener_sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)   # Allow address reuse
+            listener_sock.bind(('0.0.0.0', LISTEN_PORT))            # Bind to all interfaces on the specified port
             
             # Listen for incoming data
             data, addr = listener_sock.recvfrom(1024)
-            log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Received data from {addr}, data: {data}\n")
-            log.flush()
+            
+            # Log the received data
+            LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Received data from {addr}, data: {data}\n")
+            LOG.flush()
 
-            broadcaster_ip = addr[0]
+            broadcaster_ip = addr[0]                               # Extract broadcaster's IP address
             
             # Parse the received JSON data
             try:
-                JSON_string = data.decode('utf-8') # Decode bytes to string
-                received_data = json.loads(JSON_string) # From string to JSON
+                JSON_string = data.decode('utf-8')                 # Decode bytes to string
+                received_data = json.loads(JSON_string)            # From string to JSON
                 
                 # update ip address map to save the ip address of the device
-                ip_address_map[received_data.get('type', 'N/A')] = broadcaster_ip
+                IP_ADDRESS_MAP[received_data.get('type', 'N/A')] = broadcaster_ip
                 
                 # handle data from esp32(sensor dht11)
                 if(received_data.get("type") == "dht11"):
@@ -72,28 +76,29 @@ def listen():
                     
                     # convert unix time to readable format
                     if last_updated != 'N/A':
-                        last_updated += 946684800  # Adjust from ESP32 epoch to Unix epoch
-                        last_message_esp32_time = last_updated # update last message time
-                        last_updated = time.gmtime(last_updated)
-                        last_updated_str = time.strftime("%d-%m-%Y %H:%M:%S", last_updated)
+                        last_updated += 946684800                       # Adjust from ESP32 epoch to Unix epoch
+                        LAST_MESSAGE_ESP32_TIME = last_updated          # update last message time
+                        last_updated = time.gmtime(last_updated)        # convert to struct_time
+                        last_updated_str = time.strftime("%d-%m-%Y %H:%M:%S", last_updated) # format to string
                         
                     print(f"[RECEIVED] Sensor type: {sensor_type}, id: {sensor_id} from {broadcaster_ip}")
                     print(f"Temperature: {temperature}C, Humidity: {humidity}%, last update: {last_updated_str}")
                     # update humidity via api
                     update_room_humidity(sensor_id, humidity)
+                    update_room_temperature(sensor_id, temperature)
                     
                     # open window if humidity is too high
-                    if(humidity >= 60 and opened_by_humidity == False):
+                    if(humidity >= 60 and OPEN_BY_HUMIDITY == False):
                         print("High humidity detected, sending open instruction")
-                        send_instruction(True, ip_address_map.get("window_controller"))
+                        send_instruction(True, IP_ADDRESS_MAP.get("window_controller"))
                         update_window_status(sensor_id, True)
-                        opened_by_humidity = True
+                        OPEN_BY_HUMIDITY = True
                     # close window if humidity is back to normal
-                    if(humidity < 50 and opened_by_humidity == True):
+                    if(humidity < 50 and OPEN_BY_HUMIDITY == True):
                         print("Humidity back to normal, sending close instruction")
-                        send_instruction(False, ip_address_map.get("window_controller"))
+                        send_instruction(False, IP_ADDRESS_MAP.get("window_controller"))
                         update_window_status(sensor_id, False)
-                        opened_by_humidity = False
+                        OPEN_BY_HUMIDITY = False
 
                 # handle messages from raspberry pi
                 elif(received_data.get("type") == "window_controller"):
@@ -103,58 +108,58 @@ def listen():
                     last_updated = received_data.get('last_updated', 0)
                     print(f"[RECEIVED] Broadcast message: {message_from_pi} from {broadcaster_ip} with id: {received_data.get('id', 'N/A')}, last_updated: {last_updated}")
                     
-                    last_message_pi_time = last_updated # update last message time
+                    LAST_MESSAGE_PI_TIME = last_updated # update last message time
                     
                     # fetch current window status from api
                     window_status = get_windows_status(received_data.get('id', 'N/A'))
                     print(f"Window status for id {received_data.get('id', 'N/A')}: {window_status}")
                     
                     # check if status has changed
-                    if openstatus != window_status:
+                    if OPEN_STATUS != window_status:
                         print("Status changed, sending instruction")
                         send_instruction(window_status, broadcaster_ip)
-                        openstatus = window_status
+                        OPEN_STATUS = window_status
                 else: 
                     # handle unknown type
-                    log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - VALUE ERROR from {broadcaster_ip}: Unknown type received, raw data: {data}\n")
-                    log.flush()
+                    LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - VALUE ERROR from {broadcaster_ip}: Unknown type received, raw data: {data}\n")
+                    LOG.flush()
                     raise ValueError("Unknown type received")
                 
             except json.JSONDecodeError as e:
                 print(f"  [ERROR] Received unreadable data from {broadcaster_ip}. Skipping.")
-                log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - JSON DECODE ERROR from {broadcaster_ip}: {e}, raw data: {data}\n")
-                log.flush()
+                LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - JSON DECODE ERROR from {broadcaster_ip}: {e}, raw data: {data}\n")
+                LOG.flush()
                 
             except ValueError as ve:
                 print(f"  [ERROR] {ve} from {broadcaster_ip}. Skipping.")
-                log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - VALUE ERROR from {broadcaster_ip}: {ve}, raw data: {data}\n")
-                log.flush()
+                LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - VALUE ERROR from {broadcaster_ip}: {ve}, raw data: {data}\n")
+                LOG.flush()
                 
         except KeyboardInterrupt:
             print("\n\n Receiver stopped by user (Ctrl+C).")
 
-
+    
 def check_data_timeout():
     """
     Check every minute if data was recently received from devices.
-    if not, log a warning.
+    if not, ½ a warning.
     """
-    global last_message_esp32_time
-    global last_message_pi_time
+    global LAST_MESSAGE_ESP32_TIME
+    global LAST_MESSAGE_PI_TIME
     while True:
         time.sleep(60)
         
         current_time = time.time()
         # check if more than a minute has passed since last message from esp32
-        if current_time - last_message_esp32_time + 946684800 > 60:
+        if current_time - LAST_MESSAGE_ESP32_TIME > 60:
             print(f"No data received in the last minute!")
-            log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - WARNING: No data received in the last minute!\n")
-            log.flush()
+            LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - WARNING: No data received in the last minute!\n")
+            LOG.flush()
         # check if more than a minute has passed since last message from raspberry pi
-        if current_time - last_message_pi_time > 60:
+        if current_time - LAST_MESSAGE_PI_TIME > 60:
             print(f"No data received from Raspberry Pi in the last minute!")
-            log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - WARNING: No data received from Raspberry Pi in the last minute!\n")
-            log.flush()
+            LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - WARNING: No data received from Raspberry Pi in the last minute!\n")
+            LOG.flush()
 
 def get_windows_status(id):
     """
@@ -215,7 +220,7 @@ def send_instruction(window_status, broadcaster_ip):
         
         # Prepare instruction payload
         instruction_payload = {
-            "source": client_id,
+            "source": CLIENT_ID,
             "should_open": window_status,
         }
         
@@ -224,11 +229,11 @@ def send_instruction(window_status, broadcaster_ip):
         instruction_encoded = instruction_json.encode('utf-8')
         
         # Log the sending action
-        log.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Sending instruction to {broadcaster_ip}:{response_port}, data: {instruction_json}\n")
-        log.flush()
+        LOG.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Sending instruction to {broadcaster_ip}:{RESPONSE_PORT}, data: {instruction_json}\n")
+        LOG.flush()
         
         # Send the instruction to the broadcaster's IP and response port
-        reply_sock.sendto(instruction_encoded, (broadcaster_ip, response_port))
+        reply_sock.sendto(instruction_encoded, (broadcaster_ip, RESPONSE_PORT))
         
     except Exception as e:
         print(f"[SEND ERROR] Error sending instruction: {e}")

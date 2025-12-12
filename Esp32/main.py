@@ -11,7 +11,8 @@ PASSWORD = 'lanmagle'
 BROADCAST_IP = '255.255.255.255'  # This sends to everyone on the network
 PORT = 37020                      # Broadcast port
 PIN_NUM = 4                       # Pin where the DHT11 is connected
-ID = 1                            # Unique ID for this sensor        
+ID = 1                            # Unique ID for this sensor       
+# --- End Configuration --- 
 
 # --- SETUP WIFI ---
 wlan = network.WLAN(network.STA_IF)

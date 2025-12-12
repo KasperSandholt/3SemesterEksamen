@@ -5,37 +5,35 @@ import json
 import threading
 from gpiozero import Motor
 
-motor = Motor(forward=27, backward=22, enable=17, pwm=True)
-
 # --- Configuration ---
 BROADCAST_IP = '255.255.255.255'
 PORT = 37020                # Port for sending the broadcast
 RESPONSE_PORT = 37021       # Port for receiving the directed reply
-SEND_INTERVAL_SECONDS = 5 
-MAX_BUFFER_SIZE = 1024
+SEND_INTERVAL_SECONDS = 5   # Interval between broadcasts     
+ID = 1                      # Unique ID for this controller
 
-id = 1
+# Motor setup to control a window
+motor = Motor(forward=27, backward=22, enable=17, pwm=True)
 # --- End Configuration ---
 
 def receive_replies():
     """Listens for directed replies from all responders."""
     try:
-        reply_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        reply_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # Bind to the RESPONSE_PORT on all interfaces
-        reply_sock.bind(('0.0.0.0', RESPONSE_PORT))
+        reply_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)    # Create UDP socket
+        reply_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) # Allow address reuse
+        reply_sock.bind(('0.0.0.0', RESPONSE_PORT))                      # Ready to receive on RESPONSE_PORT
         
         print(f"\n[Reply Listener] Listening for replies on port {RESPONSE_PORT}...")
         
         while True:
-            # This thread blocks here until a reply is received
-            data, addr = reply_sock.recvfrom(MAX_BUFFER_SIZE)
-            sender_ip = addr[0]
+            data, addr = reply_sock.recvfrom(1024)  # waits for data
+            sender_ip = addr[0]                     # Extract sender's IP address
             
             try:
-                reply_json = data.decode('utf-8')
-                reply_data = json.loads(reply_json)
+                reply_json = data.decode('utf-8')   # Decode bytes to string
+                reply_data = json.loads(reply_json) # Parse JSON
                 
+                # open motor if should_open is true, else close motor
                 if reply_data.get('should_open'):
                     print("Motor forward")
                     motor.forward()
@@ -60,41 +58,44 @@ def receive_replies():
             reply_sock.close()
 
 def send_continuous_broadcast():
-    """Starts the listener and sends continuous JSON broadcasts."""
+    """
+    Starts the listener and sends continuous JSON broadcasts.
+    """
     
-    # 1. Start the reply listener in a separate thread
+    # starts the reply listener thread
     listener_thread = threading.Thread(target=receive_replies)
-    listener_thread.daemon = True # Allows the main program to exit cleanly
+    listener_thread.daemon = True # Daemon thread will exit when main program exits
     listener_thread.start()
 
-    # 2. Setup the broadcasting socket
+    # Setup the broadcasting socket
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)   # Create UDP socket
     except socket.error as err:
         print(f"Error creating socket: {err}")
         sys.exit(1)
 
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)    # Enable broadcasting
     
     print(f" Starting continuous JSON broadcast to {BROADCAST_IP}:{PORT}...")
     
-    # 3. Continuous Sending Loop
+    # Continuous boroadcast loop
     try:
         while True:
             payload_data = {
-                "id": id,
+                "id": ID,
                 "last_updated": time.time(),
                 "message": "should i open?",
                 "type": "window_controller"
             }
             
-            json_string = json.dumps(payload_data)
-            encoded_data = json_string.encode('utf-8')
+            json_string = json.dumps(payload_data)           # Serialize to JSON
+            encoded_data = json_string.encode('utf-8')       # Encode to bytes
             
             # Send the data
             sock.sendto(encoded_data, (BROADCAST_IP, PORT))
             
-            time.sleep(SEND_INTERVAL_SECONDS)
+            # Wait before sending the next broadcast
+            time.sleep(SEND_INTERVAL_SECONDS) 
             
     except KeyboardInterrupt:
         print("\n\n Broadcast stopped by user (Ctrl+C).")
